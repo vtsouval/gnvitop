@@ -158,7 +158,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     background: #1e293b;
     border: 1px solid #334155;
     border-radius: 12px;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
     transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
   }
   .host-card:hover {
@@ -484,6 +485,29 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   body.compact .host-info { display: none; }
   body.compact .host-body { padding: 12px 16px; }
 
+
+  .host-card:has(.disk-resource:hover), .host-card:has(.disk-resource:focus-within) { z-index: 5; }
+  .host-header { flex-wrap: wrap; gap: 10px; border-radius: 11px 11px 0 0; }
+  .host-header-left { flex: 1 1 105px; }
+  .host-name { overflow-wrap: anywhere; }
+  .host-resources { display: grid; gap: 5px; width: 124px; flex: 0 0 124px; }
+  .host-resource { display: grid; grid-template-columns: 28px 1fr 30px; gap: 6px; align-items: center; font-size: 10px; color: #94a3b8; }
+  .host-resource-value { text-align: right; font-variant-numeric: tabular-nums; color: #cbd5e1; }
+  .host-resource-track { height: 5px; border-radius: 5px; overflow: hidden; background: #334155; }
+  .host-resource-fill { height: 100%; border-radius: inherit; background: #38bdf8; }
+  .disk-resource .host-resource-fill { background: #a78bfa; }
+  .host-resource-fill.pressure { background: #fbbf24; }
+  .host-resource-fill.critical { background: #f87171; }
+  .disk-resource { position: relative; cursor: default; outline: none; }
+  .disk-resource:focus-visible { outline: 1px solid #a78bfa; outline-offset: 4px; border-radius: 3px; }
+  .disk-popover { display: none; position: absolute; z-index: 20; top: 100%; right: -20px; padding-top: 10px; width: min(310px, 80vw); }
+  .disk-resource:hover .disk-popover, .disk-resource:focus-within .disk-popover { display: block; }
+  .disk-popover-inner { background: #0f172a; border: 1px solid #475569; border-radius: 10px; padding: 12px; box-shadow: 0 10px 28px #0008; max-height: 260px; overflow-y: auto; }
+  .disk-entry + .disk-entry { margin-top: 12px; }
+  .disk-entry-line { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; font-size: 11px; color: #cbd5e1; }
+  .disk-mount { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .disk-capacity { white-space: nowrap; font-variant-numeric: tabular-nums; color: #94a3b8; }
+
   /* Collapse */
   .host-header {
     transition: background 0.15s;
@@ -495,7 +519,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     min-width: 0;
     cursor: pointer;
     user-select: none;
-    flex: 1;
+    flex: 1 1 105px;
   }
   .host-header-right {
     display: flex;
@@ -1090,7 +1114,44 @@ function renderGPU(gpu, host) {
     </div>`;
 }
 
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  const unit = value >= 1024**4 ? 'TiB' : 'GiB';
+  return (value / (unit === 'TiB' ? 1024**4 : 1024**3)).toFixed(1) + ' ' + unit;
+}
+
+function resourcePercent(resource) {
+  if (!resource || !Number.isFinite(resource.total_bytes) || resource.total_bytes <= 0 || !Number.isFinite(resource.used_bytes)) return null;
+  const value = Number.isFinite(resource.usage_pct) ? resource.usage_pct : resource.used_bytes / resource.total_bytes * 100;
+  return Math.max(0, Math.min(100, value));
+}
+
+function resourceTrack(percent) {
+  const pressure = percent >= 95 ? ' critical' : percent >= 85 ? ' pressure' : '';
+  return `<div class="host-resource-track"><div class="host-resource-fill${pressure}" style="width:${percent === null ? 0 : percent}%"></div></div>`;
+}
+
+function renderHostResources(host) {
+  const resources = host.resources || {};
+  const memory = resources.memory, home = resources.home_disk;
+  const ramPct = resourcePercent(memory), diskPct = resourcePercent(home);
+  const ramTitle = memory ? `${formatBytes(memory.used_bytes)} / ${formatBytes(memory.total_bytes)} · ${formatBytes(memory.available_bytes)} available` : 'RAM unavailable';
+  const disks = resources.disks || [];
+  const entries = disks.map(disk => {
+    const isHome = home && disk.device === home.device;
+    const title = `${disk.device} · ${disk.mount} · ${formatBytes(disk.available_bytes)} free`;
+    return `<div class="disk-entry" title="${escapeText(title)}"><div class="disk-entry-line"><span class="disk-mount">${escapeText(isHome ? '~ · ' + disk.mount : disk.mount)}</span><span class="disk-capacity">${formatBytes(disk.used_bytes)} / ${formatBytes(disk.total_bytes)}</span></div>${resourceTrack(resourcePercent(disk))}</div>`;
+  }).join('');
+  return `<div class="host-resources" onclick="event.stopPropagation()" onkeydown="if(event.key==='Escape') this.querySelector('.disk-resource').blur()">
+    <div class="host-resource" title="${escapeText(ramTitle)}"><span>RAM</span>${resourceTrack(ramPct)}<span class="host-resource-value">${ramPct === null ? '—' : Math.round(ramPct) + '%'}</span></div>
+    <div class="host-resource disk-resource" tabindex="0" aria-label="Home filesystem ${diskPct === null ? 'unavailable' : Math.round(diskPct) + '% used'}; disk details"><span>Disk</span>${resourceTrack(diskPct)}<span class="host-resource-value">${diskPct === null ? '—' : Math.round(diskPct) + '%'}</span>${entries ? `<div class="disk-popover"><div class="disk-popover-inner">${entries}</div></div>` : ''}</div>
+  </div>`;
+}
+
 function renderHosts(hosts) {
+  const focusedDisk = document.activeElement?.closest('.disk-resource');
+  const focusedHost = focusedDisk?.closest('.host-card')?.dataset.alias;
+  const diskScroll = focusedDisk?.querySelector('.disk-popover-inner')?.scrollTop || 0;
   const container = document.getElementById('content');
   if (!hosts.length) {
     if (isFirstRender) return; // keep showing the initial loading spinner
@@ -1158,6 +1219,7 @@ function renderHosts(hosts) {
               ${collapsedInfo}
             </div>
           </div>
+          ${renderHostResources(host)}
           <div class="host-header-right">
             <button class="watch-btn${watchedHosts.has(host.alias) ? ' watching' : ''}" draggable="false" onclick="event.stopPropagation(); toggleWatch('${alias}')">${watchedHosts.has(host.alias) ? '&#128276;' : '&#128277;'}${(() => {
               if (host.status !== 'ok') return '<span class="watch-tooltip">Watch this host</span>';
@@ -1199,6 +1261,15 @@ function renderHosts(hosts) {
   } else html = renderSection(filtered);
 
   container.innerHTML = html;
+  if (focusedHost) {
+    for (const card of container.querySelectorAll('.host-card')) {
+      if (card.dataset.alias === focusedHost) {
+        card.querySelector('.disk-resource')?.focus({preventScroll:true});
+        const popup = card.querySelector('.disk-popover-inner');
+        if (popup) popup.scrollTop = diskScroll;
+      }
+    }
+  }
   container.querySelectorAll('.host-grid').forEach(g => _setupDrag(g));
   _updateGlobalWatchBtn();
 }

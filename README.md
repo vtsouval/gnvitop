@@ -265,3 +265,19 @@ For TPU chips, `memory_used_mb` and `gpu_utilization_pct` are `-1` (unknown) unt
 ## License
 
 MIT
+
+### Host RAM and storage
+
+Compact RAM and Disk bars sit beside each server name. RAM uses Linux
+`MemTotal - MemAvailable`; Disk represents the filesystem containing the SSH
+user's home, not the size of their own files or a per-user quota. Hover or focus
+Disk for mounted filesystems and capacities; `~` marks the home filesystem.
+Shared/bind mounts are deduplicated and temporary/virtual filesystems omitted.
+
+Collection shares the existing SSH command and 30-second cache. RAM reads
+`/proc/meminfo`; disk uses two bounded `df` metadata queries, never `du` or file
+traversal. Each disk query has a two-second timeout with a one-second kill grace;
+unavailable readings show a dash and do not invalidate the GPU sample. Disk
+collection requires GNU `df` and `timeout` on Linux; no remote installation or
+additional daemon is needed. Only mounted storage is listed; timed-out mounts
+may be absent. Local macOS host metrics are currently unavailable.

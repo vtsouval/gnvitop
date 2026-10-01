@@ -77,6 +77,67 @@ COMBINED_CMD = (
     "fi"
 )
 
+# Read kernel counters and filesystem metadata only; never walk user files.
+# Disk failures must not discard the GPU/RAM sample. GNU timeout is standard
+# on the Linux GPU hosts; without it disks remain unavailable rather than hang.
+_RESOURCE_QUERY = r"""
+printf '\n---HOST-RESOURCES---\n'
+if [ -r /proc/meminfo ]; then
+  awk '/^(MemTotal|MemAvailable):/ {print $1, $2}' /proc/meminfo
+fi
+if command -v timeout >/dev/null 2>&1; then
+  printf '%s\n' '---HOME-DISK---'
+  LC_ALL=C timeout -k 1 2 df -P -k -- "$HOME" 2>/dev/null || :
+  printf '%s\n' '---ALL-DISKS---'
+  LC_ALL=C timeout -k 1 2 df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x ramfs -x efivarfs 2>/dev/null || :
+fi
+"""
+COMBINED_CMD += "; " + _RESOURCE_QUERY
+
+
+def _parse_host_resources(output):
+    """Split optional host telemetry from the unchanged accelerator protocol."""
+    gpu_output, marker, resource_output = output.partition("---HOST-RESOURCES---")
+    resources = {"memory": None, "home_disk": None, "disks": []}
+    if not marker:
+        return gpu_output.strip(), resources
+    memory, _, disk_output = resource_output.partition("---HOME-DISK---")
+    fields = dict(re.findall(r"^(MemTotal|MemAvailable):\s+(\d+)\s*$", memory, re.M))
+    total, available = int(fields.get("MemTotal", 0)), int(fields.get("MemAvailable", -1))
+    if total > 0 and 0 <= available <= total:
+        resources["memory"] = {"total_bytes": total * 1024,
+                               "used_bytes": (total - available) * 1024,
+                               "available_bytes": available * 1024}
+    home_output, _, all_output = disk_output.partition("---ALL-DISKS---")
+
+    def parse_disks(text):
+        disks = []
+        for line in text.splitlines():
+            match = re.match(r"^(.+?)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\d+)%\s+(.+)$", line)
+            if not match:
+                continue
+            device, total, used, available, percent, mount = match.groups()
+            total, used, available = int(total), int(used), int(available)
+            if total <= 0 or used > total:
+                continue
+            disks.append({"device": device, "mount": mount,
+                          "total_bytes": total * 1024, "used_bytes": used * 1024,
+                          "available_bytes": max(0, available) * 1024,
+                          "usage_pct": min(100, int(percent))})
+        return disks
+
+    home = parse_disks(home_output)
+    if home:
+        resources["home_disk"] = home[0]
+    seen = set()
+    for disk in home[:1] + parse_disks(all_output):
+        # Bind mounts share a filesystem; show each device only once.
+        if disk["device"] not in seen:
+            resources["disks"].append(disk)
+            seen.add(disk["device"])
+    return gpu_output.strip(), resources
+
+
 CURRENT_USER = getpass.getuser()
 
 # System users to filter out from GPU process list
@@ -413,6 +474,7 @@ def query_gpu(host_info, hosts_by_alias=None):
         output = stdout.read().decode("utf-8").strip()
         client.close()
 
+        output, result["resources"] = _parse_host_resources(output)
         gpu_part, proc_part, vendor = _parse_combined_output(output)
 
         if not gpu_part:
@@ -502,6 +564,7 @@ def query_local_gpu():
             COMBINED_CMD, shell=True, capture_output=True, text=True, timeout=30
         ).stdout.strip()
 
+        output, result["resources"] = _parse_host_resources(output)
         gpu_part, proc_part, vendor = _parse_combined_output(output)
 
         if not gpu_part:
