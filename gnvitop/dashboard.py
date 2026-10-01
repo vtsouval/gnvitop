@@ -413,17 +413,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
 
   .gpu-item.has-mine { background:linear-gradient(90deg,#172f4b80,transparent); border-radius:8px; box-shadow:inset 3px 0 #60a5fa; padding-left:12px; padding-right:8px; }
-  .mine-badge { display:inline-block; color:#93c5fd; background:#1e3a5f; font-size:10px; border-radius:4px; padding:3px 6px; margin-left:6px; vertical-align:middle; white-space:nowrap; }
   .memory-split { display:flex; }
   .memory-split > span { height:100%; flex-shrink:0; }
   .memory-mine { background:#60a5fa; }
   .memory-others { background:#64748b; }
   .memory-unattributed { background:repeating-linear-gradient(135deg,#475569 0 3px,#334155 3px 6px); }
-  .memory-legend { display:flex; flex-wrap:wrap; gap:4px 12px; color:#94a3b8; font-size:10px; margin-top:5px; line-height:1.5; }
-  .memory-legend .mine { color:#93c5fd; }
-  .metrics-pair { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:14px; }
-  .metrics-pair .bar-label { display:block; min-height:34px; line-height:1.4; }
-  .metrics-pair .bar-label span { display:block; }
+  .metrics-stack { display:block; }
+  .metrics-stack .bar-label { display:flex; gap:8px; align-items:baseline; }
+
   .bar-fill.power { background:#a78bfa; }
   .power-unavailable { color:#64748b; font-size:11px; }
   .user-tag.current-user .user-mem { color:#bfdbfe; }
@@ -433,12 +430,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .process-details table { width:100%; border-collapse:collapse; text-align:left; margin-top:8px; }
   .process-details th,.process-details td { padding:6px; border-bottom:1px solid #263448; white-space:nowrap; }
   .process-details tr.mine { color:#bfdbfe; background:#172f4b; }
-  .process-details p { font-size:10px; line-height:1.5; margin:8px 0; }
   .host-workload { color:#93c5fd; font-size:11px; margin-top:6px; }
-  .host-workload.empty { color:#94a3b8; }
   .organizer-host .identity-field { grid-column:1/-1; }
   .identity-field small { display:block; margin-top:5px; }
-  @media(max-width:480px) { .metrics-pair { grid-template-columns:1fr; gap:0; } }
 
   .mode-toggle {
     display: flex;
@@ -662,7 +656,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 </div>
 
 <dialog id="organizer" aria-labelledby="organizer-title"><form onsubmit="saveOrganizer(event)">
-<h2 id="organizer-title">Organize your servers</h2><p>Choose display names and groups. These names do not change SSH connections.</p>
+<h2 id="organizer-title">Organize your servers</h2><p>Names, groups and usernames.</p>
 <h3>Groups</h3><div id="organizer-groups"></div><button type="button" onclick="addGroup()">Add group</button>
 <h3>Servers</h3><div id="organizer-hosts"></div><p id="organizer-error" role="alert"></p>
 <div class="organizer-actions"><button type="button" onclick="document.getElementById('organizer').close()">Cancel</button><button id="save-organizer" type="submit">Save changes</button></div>
@@ -707,7 +701,7 @@ function renderOrganizer() {
     const row = document.createElement('div'); row.className = 'organizer-host';
     row.innerHTML = `<label>${escapeText(alias)}<input aria-label="Display name for ${escapeText(alias)}" value="${escapeText(host.name)}" maxlength="100" required></label><label>Group<select aria-label="Group for ${escapeText(alias)}"><option value="">Ungrouped</option>${preferencesDraft.groups.map(g => `<option value="${escapeText(g.id)}" ${g.id===host.group?'selected':''}>${escapeText(g.name)}</option>`).join('')}</select></label>`;
     const identity = document.createElement('label'); identity.className = 'identity-field';
-    identity.innerHTML = `My usernames<input aria-label="My usernames for ${escapeText(alias)}" value="${escapeText((host.my_users || []).join(', '))}" placeholder="Automatic: SSH login username"><small>Optional, comma separated. Used only to highlight your processes.</small>`;
+    identity.innerHTML = `My usernames<input aria-label="My usernames for ${escapeText(alias)}" value="${escapeText((host.my_users || []).join(', '))}" placeholder="SSH username by default; comma separated">`;
     identity.querySelector('input').addEventListener('input', e => host.my_users = e.target.value.split(',').map(s => s.trim()).filter(Boolean));
     row.querySelector('input').addEventListener('input', e => host.name = e.target.value);
     row.querySelector('select').addEventListener('change', e => host.group = e.target.value || null);
@@ -1048,23 +1042,21 @@ function renderMemory(gpu, users, isTpu) {
   const processes = gpu.processes || [];
   const mine = workload([gpu], users);
   const others = processes.filter(p => !isMine(p,users)).reduce((n,p) => n + (metric(p.gpu_memory_mb) ? p.gpu_memory_mb : 0),0);
-  const othersUnknown = processes.some(p => !isMine(p,users) && !metric(p.gpu_memory_mb));
   const used = Math.max(0,gpu.memory_used_mb);
   // Different sampling times can make process totals exceed board usage. Scale the visual only.
   const totalAttributed = mine.memory + others;
   const scale = totalAttributed > used && totalAttributed > 0 ? used / totalAttributed : 1;
   const width = value => gpu.memory_total_mb > 0 ? pct(value / gpu.memory_total_mb * 100) : 0;
   const unattributed = Math.max(0,used-totalAttributed);
-  const label = `You: ${formatMB(mine.memory)}${mine.unknown?' + unknown':''}; others: ${formatMB(others)}${othersUnknown?' + unknown':''}; system or unreported: ${formatMB(unattributed)}`;
+  const label = `${formatMB(used)} / ${formatMB(gpu.memory_total_mb)} GPU memory; ${formatMB(gpu.memory_free_mb)} free`;
   return `<div class="bar-container"><div class="bar-label"><span>GPU Memory</span><span>${formatMB(used)} / ${formatMB(gpu.memory_total_mb)}</span></div>
-    <div class="bar-track memory-split" role="img" aria-label="${escapeText(label)}" title="${escapeText(label)}${scale<1?' — process and GPU samples differ; segments scaled to used memory.':''}"><span class="memory-mine" style="width:${width(mine.memory*scale)}%"></span><span class="memory-others" style="width:${width(others*scale)}%"></span><span class="memory-unattributed" style="width:${width(unattributed)}%"></span></div>
-    <div class="memory-legend"><span class="mine">You ${formatMB(mine.memory)}${mine.unknown?' + unknown':''}</span><span>Others ${formatMB(others)}${othersUnknown?' + unknown':''}</span>${unattributed > 0 ? `<span title="Includes driver overhead, hidden or filtered processes, and sampling differences">Unattributed ${formatMB(unattributed)}</span>`:''}</div></div>`;
+    <div class="bar-track memory-split" role="img" aria-label="${escapeText(label)}" title="${formatMB(gpu.memory_free_mb)} free"><span class="memory-mine" style="width:${width(mine.memory*scale)}%"></span><span class="memory-others" style="width:${width(others*scale)}%"></span><span class="memory-unattributed" style="width:${width(unattributed)}%"></span></div></div>`;
 }
 function renderPower(gpu) {
   const draw = gpu.power_draw_w, limit = gpu.power_limit_w;
   const available = metric(draw), hasLimit = metric(limit) && limit > 0;
   const value = available ? `${draw.toFixed(1)} W${hasLimit?' / '+limit.toFixed(0)+' W':''}` : 'N/A';
-  return `<div class="bar-container" title="Whole-GPU power draw${hasLimit?' relative to its configured power limit':''}; not per-user power"><div class="bar-label"><span>Power</span><span>${value}</span></div>${available && hasLimit ? `<div class="bar-track"><div class="bar-fill power" style="width:${pct(draw/limit*100)}%"></div></div>` : `<div class="power-unavailable">${available?'Power limit unavailable':'Not reported by device'}</div>`}</div>`;
+  return `<div class="bar-container" title="GPU power / limit"><div class="bar-label"><span>Power</span><span>${value}</span></div>${available && hasLimit ? `<div class="bar-track"><div class="bar-fill power" style="width:${pct(draw/limit*100)}%"></div></div>` : '<div class="bar-track"></div>'}</div>`;
 }
 function renderProcessUsers(processes, users, detailsKey) {
   if (!processes || !processes.length) return '';
@@ -1077,25 +1069,25 @@ function renderProcessUsers(processes, users, detailsKey) {
   }
   const tags = [...userMem.entries()].sort((a,b) => Number(users.includes(b[0]))-Number(users.includes(a[0]))).map(([user, data]) => {
     const mine = isMine({user},users);
-    return `<span class="user-tag${mine?' current-user':''}">${mine?'You · ':''}${escapeText(user)} <span class="user-mem">${data.unknown?(data.memory?formatMB(data.memory)+' + unknown':'Memory N/A'):formatMB(data.memory)}</span></span>`;
+    return `<span class="user-tag${mine?' current-user':''}">${escapeText(user)} <span class="user-mem">${data.unknown?(data.memory?formatMB(data.memory)+' + unknown':'Memory N/A'):formatMB(data.memory)}</span></span>`;
   }).join('');
   const sorted = [...processes].sort((a,b) => Number(isMine(b,users))-Number(isMine(a,users)) || (b.gpu_memory_mb||0)-(a.gpu_memory_mb||0));
-  const rows = sorted.map(p => `<tr class="${isMine(p,users)?'mine':''}"><td>${isMine(p,users)?'You · ':''}${escapeText(p.user || 'unknown')}</td><td>${escapeText(p.pid)}</td><td>${escapeText(p.command || '—')}</td><td>${metric(p.gpu_memory_mb)?formatMB(p.gpu_memory_mb):'N/A'}</td><td>${metric(p.sm_utilization_pct)?p.sm_utilization_pct+'%':'N/A'}</td></tr>`).join('');
-  return `<div class="gpu-users">${tags}</div><details class="process-details" data-key="${escapeText(detailsKey)}" ${openProcessDetails.has(detailsKey)?'open':''} ontoggle="if(this.isConnected) this.open ? openProcessDetails.add(this.dataset.key) : openProcessDetails.delete(this.dataset.key)"><summary>${processes.length} process${processes.length===1?'':'es'} · you first</summary><div class="process-scroll"><table><thead><tr><th>User</th><th>PID</th><th>Process</th><th>Memory</th><th title="Per-process streaming multiprocessor activity">SM activity</th></tr></thead><tbody>${rows}</tbody></table></div><p>SM activity is sampled per process and may overlap. It is not an additive share of the GPU total. N/A means the device did not report it.</p></details>`;
+  const rows = sorted.map(p => `<tr class="${isMine(p,users)?'mine':''}"><td>${escapeText(p.user || 'unknown')}</td><td>${escapeText(p.pid)}</td><td>${escapeText(p.command || '—')}</td><td>${metric(p.gpu_memory_mb)?formatMB(p.gpu_memory_mb):'N/A'}</td><td>${metric(p.sm_utilization_pct)?p.sm_utilization_pct+'%':'N/A'}</td></tr>`).join('');
+  return `<div class="gpu-users">${tags}</div><details class="process-details" data-key="${escapeText(detailsKey)}" ${openProcessDetails.has(detailsKey)?'open':''} ontoggle="if(this.isConnected) this.open ? openProcessDetails.add(this.dataset.key) : openProcessDetails.delete(this.dataset.key)"><summary>${processes.length} process${processes.length===1?'':'es'}</summary><div class="process-scroll"><table><thead><tr><th>User</th><th>PID</th><th>Process</th><th>Memory</th><th title="Per-process GPU activity">GPU %</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 function renderGPU(gpu, host) {
   const users = myUsers(host);
   const mine = workload([gpu],users);
   const isTpu = gpu.gpu_utilization_pct < 0;
   const gpuPct = isTpu ? 0 : gpu.gpu_utilization_pct;
-  const title = `<div class="gpu-title"><span class="gpu-name">${isTpu?'Chip':'GPU'} ${gpu.index}: ${escapeText(gpu.name)}${mine.count?'<span class="mine-badge">Your workload</span>':''}</span>${isTpu || currentMode==='compact'?'':`<span class="gpu-temp ${tempClass(gpu.temperature_c)}">${gpu.temperature_c}&deg;C</span>`}</div>`;
-  const metrics = `<div class="metrics-pair">${renderMemory(gpu,users,isTpu)}${isTpu?'':renderPower(gpu)}</div>`;
+  const title = `<div class="gpu-title"><span class="gpu-name">${isTpu?'Chip':'GPU'} ${gpu.index}: ${escapeText(gpu.name)}</span>${isTpu || currentMode==='compact'?'':`<span class="gpu-temp ${tempClass(gpu.temperature_c)}">${gpu.temperature_c}&deg;C</span>`}</div>`;
+  const metrics = `<div class="metrics-stack">${renderMemory(gpu,users,isTpu)}${isTpu?'':renderPower(gpu)}</div>`;
   const processes = renderProcessUsers(gpu.processes,users,JSON.stringify([host.alias,gpu.index]));
   if(currentMode==='compact') return `<div class="gpu-item${mine.count?' has-mine':''}">${title}${metrics}${processes}</div>`;
   return `<div class="gpu-item${mine.count?' has-mine':''}">${title}
-    <div class="bar-container"><div class="bar-label"><span>GPU Utilization · total</span><span>${isTpu?'N/A':gpuPct+'%'}</span></div>${isTpu?'':`<div class="bar-track"><div class="bar-fill ${usageClass(gpuPct)}" style="width:${pct(gpuPct)}%"></div></div>`}</div>
+    <div class="bar-container"><div class="bar-label"><span>GPU Utilization</span><span>${isTpu?'N/A':gpuPct+'%'}</span></div>${isTpu?'':`<div class="bar-track"><div class="bar-fill ${usageClass(gpuPct)}" style="width:${pct(gpuPct)}%"></div></div>`}</div>
     ${metrics}${processes}
-    <div class="gpu-stats"><div class="stat"><div class="stat-value" style="color:#93c5fd">${mine.count}</div><div class="stat-label">Your GPU processes</div></div><div class="stat"><div class="stat-value">${isTpu?formatMB(gpu.memory_total_mb):formatMB(gpu.memory_free_mb)}</div><div class="stat-label">${isTpu?'HBM Total':'Free Memory'}</div></div><div class="stat"><div class="stat-value">${isTpu?'N/A':gpu.temperature_c+'&deg;C'}</div><div class="stat-label">Temperature</div></div></div></div>`;
+    </div>`;
 }
 
 function renderHosts(hosts) {
@@ -1137,9 +1129,9 @@ function renderHosts(hosts) {
     if (host.status === 'ok') {
       body = host.gpus.map(g => renderGPU(g, host)).join('');
     } else if (host.status === 'no_gpu') {
-      body = `<div class="no-gpu-msg">${host.error || 'No NVIDIA GPU detected'}</div>`;
+      body = `<div class="no-gpu-msg">${escapeText('No GPU')}</div>`;
     } else {
-      body = `<div class="error-msg">${host.error || 'Unknown error'}</div>`;
+      body = `<div class="error-msg" title="${escapeText(host.error || 'Unavailable')}">${escapeText('Unavailable')}</div>`;
     }
     const mine = workload(host.gpus || [], myUsers(host));
     const isLocal    = host.is_local;
@@ -1162,7 +1154,7 @@ function renderHosts(hosts) {
             <div>
               <div class="host-name">${escapeText(hostDisplayName(host.alias))}</div>
               <div class="host-info">${host.user}@${host.hostname}${host.port ? ':' + host.port : ''}</div>
-              <div class="host-workload${mine.count?'':' empty'}">${mine.count ? `You · ${mine.gpus} GPU${mine.gpus===1?'':'s'} · ${formatMB(mine.memory)}${mine.unknown?' + unknown':''} memory` : host.status==='ok' ? 'No GPU processes matched to you' : ''}</div>
+              ${mine.count ? `<div class="host-workload">${escapeText(myUsers(host).join(', '))} · ${mine.gpus} GPU${mine.gpus===1?'':'s'} · ${formatMB(mine.memory)}${mine.unknown?' + unknown':''}</div>` : ''}
               ${collapsedInfo}
             </div>
           </div>
@@ -1201,7 +1193,7 @@ function renderHosts(hosts) {
       const allMembers = hosts.filter(h => hostGroup(h.alias) === group.id);
       const members = filtered.filter(h => hostGroup(h.alias) === group.id);
       const gpuCount = allMembers.reduce((n,h) => n + h.gpus.length,0);
-      const content = members.length ? renderSection(members) : `<div class="group-empty">${allMembers.length ? 'No online GPU servers in this group. Expand view to see all hosts.' : 'No servers assigned yet.'}</div>`;
+      const content = members.length ? renderSection(members) : `<div class="group-empty">${allMembers.length ? 'No online servers' : 'No servers yet'}</div>`;
       html += `<section class="server-group"><div class="server-group-heading"><h2>${escapeText(group.name)}</h2><span>${allMembers.length} server${allMembers.length===1?'':'s'} · ${gpuCount} GPU${gpuCount===1?'':'s'}</span></div>${content}</section>`;
     }
   } else html = renderSection(filtered);
@@ -1212,9 +1204,13 @@ function renderHosts(hosts) {
 }
 
 async function fetchData(force) {
-  const url = force ? '/api/refresh' : '/api/gpus';
-  const resp = await fetch(url);
-  return await resp.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), force ? 65000 : 10000);
+  try {
+    const resp = await fetch(force ? '/api/refresh' : '/api/gpus', {signal:controller.signal});
+    if(!resp.ok) throw new Error('Dashboard unavailable');
+    return await resp.json();
+  } finally { clearTimeout(timeout); }
 }
 
 // SSE-based streaming init: renders each host as it arrives
@@ -1266,7 +1262,10 @@ function flashRefreshBtn() {
   setTimeout(() => btn.classList.remove('refreshing'), 900);
 }
 
+let refreshInFlight = false;
 async function refresh() {
+  if(refreshInFlight) return;
+  refreshInFlight = true;
   const btn = document.getElementById('btn-refresh');
   btn.disabled = true;
   btn.textContent = 'Refreshing...';
@@ -1277,14 +1276,16 @@ async function refresh() {
     renderHosts(lastData.hosts);
     updateTime(lastData.updated_at);
   } catch (e) {
-    console.error(e);
+    document.getElementById('update-time').textContent = 'Reconnecting…';
   } finally {
+    refreshInFlight = false;
     btn.disabled = false;
     btn.textContent = 'Refresh';
   }
 }
 
 function updateTime(ts) {
+  if(!ts) { document.getElementById('update-time').textContent = 'Updating…'; return; }
   const d = new Date(ts * 1000);
   document.getElementById('update-time').textContent = 'Updated: ' + d.toLocaleTimeString();
 }
@@ -1315,15 +1316,21 @@ async function init() {
 function setupAutoRefresh() {
   clearInterval(autoRefreshTimer);
   const checkbox = document.getElementById('auto-refresh');
-  function doRefresh() {
-    flashRefreshBtn();
-    fetchData(false).then(data => {
-      lastData = data;
-      renderSummary(data.hosts);
-      renderHosts(data.hosts);
+  async function doRefresh() {
+    if(refreshInFlight || (document.hidden && !notifyEnabled)) return;
+    refreshInFlight = true;
+    try {
+      const data = await fetchData(false);
+      if(!lastData || (data.revision ?? data.updated_at) !== (lastData.revision ?? lastData.updated_at)) {
+        lastData = data;
+        renderSummary(data.hosts);
+        renderHosts(data.hosts);
+        updateTime(data.updated_at);
+        checkWatchedNotifications(data.hosts);
+      }
       updateTime(data.updated_at);
-      checkWatchedNotifications(data.hosts);
-    }).catch(() => {});
+    } catch(e) { document.getElementById('update-time').textContent = 'Reconnecting…'; }
+    finally { refreshInFlight = false; }
   }
   if (checkbox.checked) {
     autoRefreshTimer = setInterval(doRefresh, refreshIntervalSecs * 1000);

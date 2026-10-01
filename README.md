@@ -15,7 +15,7 @@ that lets you start, restart, and stop monitoring from Safari.
   Empty groups remain visible for future machines.
 - Names and assignments are saved in `~/.config/gnvitop/dashboard.json`.
   Set `GNVITOP_PREFERENCES` to override this path.
-- Your workloads have a blue accent, a "Your workload" badge, and per-server
+- Your workloads have a blue accent, highlighted usernames, and per-server
   memory totals. GPU memory bars separate your allocation (blue), other users
   (slate), and system/unreported usage (striped). Matching defaults to each
   server's SSH username; **Organize → My usernames** accepts optional aliases.
@@ -23,7 +23,7 @@ that lets you start, restart, and stop monitoring from Safari.
   sampled SM activity. These per-process readings may overlap and are not an
   additive split of device utilization. Unsupported readings show N/A.
   Process visibility, container usernames, and sampling can limit attribution.
-- NVIDIA GPU power appears beside memory as watts versus the configured
+- NVIDIA GPU power appears below memory as watts versus the configured
   power limit, including in compact view. This is whole-GPU power, not per-user
   power or whole-server electricity consumption. Unsupported devices show N/A.
 - On macOS, **`gnvitop`** starts monitoring in the background, prints a
@@ -52,7 +52,17 @@ the first launch. Existing selected configurations are retained. A RunPod
 group does not provision pods or discover them through RunPod's API; add a
 reachable SSH entry and assign it to the group.
 
-For development checks: `python -m unittest discover -s tests -v`.
+Polling is shared across browser tabs, initial streams, manual refresh, and
+optional history recording. The default remote sampling interval is 30 seconds;
+manual refreshes are coalesced with a five-second minimum between completed
+cycles. A cycle uses two NVIDIA queries and one process-list snapshot per host.
+Unavailable hosts retry with backoff up to five minutes; manual Refresh resets
+backoff. Successful hosts update without waiting for slow ones. SSH resources
+are closed on failures. Hidden tabs skip visual polling unless notifications are
+enabled, and unchanged snapshots are not rendered again.
+
+For development checks: `python -m unittest discover -s tests -v` and
+`node tests/test_dashboard.js`.
 
 The original project documentation follows.
 

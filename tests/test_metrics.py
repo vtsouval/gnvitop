@@ -1,4 +1,7 @@
 import subprocess
+import os
+import tempfile
+from pathlib import Path
 import unittest
 from gnvitop import server, preferences
 
@@ -14,8 +17,12 @@ class MetricsTests(unittest.TestCase):
         for extra in [False, True]:
             header='# gpu pid type sm mem enc dec '+('jpg ofa ' if extra else '')+'fb '+('ccpm ' if extra else '')+'command'
             row='0 123 C 37 8 0 0 '+('0 0 ' if extra else '')+'2048 '+('0 ' if extra else '')+'python'
-            script="nvidia-smi() { cat <<'DATA'\n"+header+'\n# units\n'+row+"\n0 - - - - - - -\nDATA\n}\nps() { echo researcher_long_username; }\n"+server._PROC_QUERY
-            output=subprocess.run(['bash','-c',script],capture_output=True,text=True,check=True)
+            script="nvidia-smi() { cat <<'DATA'\n"+header+'\n# units\n'+row+"\n0 - - - - - - -\nDATA\n}\n"+server._PROC_QUERY
+            with tempfile.TemporaryDirectory() as directory:
+                ps = Path(directory)/'ps'
+                ps.write_text('#!/bin/sh\nprintf "123 researcher_long_username python\\n"\n')
+                ps.chmod(0o755)
+                output=subprocess.run(['bash','-c',script],capture_output=True,text=True,check=True,env={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH']})
             self.assertEqual(output.stderr,'')
             gpus=[{'index':0,'processes':[]}]
             server._attach_processes(gpus,output.stdout)

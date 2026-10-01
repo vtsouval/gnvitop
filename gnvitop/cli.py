@@ -131,7 +131,7 @@ def main():
             from . import server
             server.SSH_CONFIG_PATH = args.ssh_config
         import json
-        from .server import fetch_all_gpu_info
+        from .server import cached_gpu_info
         results = fetch_all_gpu_info()
         output = []
         for host in results:
@@ -216,11 +216,11 @@ def main():
     # Start history sampler (opt-in via --history)
     if args.history:
         from .db import init_db, set_csv_path, start_sampler
-        from .server import fetch_all_gpu_info
+        from .server import cached_gpu_info
         if args.csv:
             set_csv_path(args.csv)
         init_db()
-        start_sampler(args.interval, fetch_all_gpu_info)
+        start_sampler(args.interval, cached_gpu_info)
 
     # Suppress Flask/Werkzeug startup banner (we already printed our own)
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
