@@ -16,9 +16,9 @@ main{position:relative;flex:1;min-height:0;display:flex}iframe{width:100%;height
 #error{color:#fecaca;background:#3b222b;margin:0;padding:12px 24px;font-size:14px}a{color:#7dd3fc}[hidden]{display:none!important}
 @media(max-width:720px){header{gap:10px;padding:12px 16px}.note{display:none}.brand{font-size:20px}h1{font-size:29px}button{font-size:13px}}
 </style></head><body>
-<header id="launcher-header"><div class="brand"><img src="/icon.svg" alt="">gnvitop</div><span id="status" class="status" role="status">Checking…</span><span class="spacer"></span><span class="note" id="note">Your GPU workspace</span><button id="restart" hidden>Restart</button><button id="toggle" class="start" disabled>Start monitoring</button></header>
+<header id="launcher-header"><div class="brand"><img src="/icon.svg" alt="">gnvitop</div><span id="status" class="status" role="status">Checking…</span><span class="spacer"></span><span class="note" id="note">Your GPU workspace</span><button id="restart" hidden>Restart</button><button id="toggle" class="start" disabled>Start</button></header>
 <div id="error" role="alert" hidden></div>
-<main><section id="empty"><img class="symbol" src="/icon.svg" alt=""><h1 id="heading">Your GPU workspace</h1><p id="description">Check availability, utilization, and running experiments across your remote servers.</p><button id="start" class="start" disabled>Start monitoring</button><div class="servers">__GROUPS__</div><p class="note">Save this page in Safari Favorites to return anytime.</p></section><iframe id="dashboard" title="Live GPU dashboard" hidden></iframe></main>
+<main><section id="empty"><img class="symbol" src="/icon.svg" alt=""><h1 id="heading">Your GPU workspace</h1><p id="description" hidden></p><button id="start" class="start" disabled>Start</button><div class="servers">__GROUPS__</div></section><iframe id="dashboard" title="Live GPU dashboard" hidden></iframe></main>
 <script nonce="__NONCE__">
 const token='__TOKEN__';
 const $=id=>document.getElementById(id);
@@ -26,20 +26,20 @@ let running=false,busy=false,lastPid=null,requestInFlight=false;
 function showError(message){$('error').textContent=message;$('error').hidden=!message;}
 function render(state){
  running=state.running;
- $('launcher-header').hidden=state.ready;
+ $('launcher-header').hidden=state.ready||!running;
  $('status').textContent=state.ready?'Monitoring running':running?'Starting…':'Monitoring stopped';
  $('status').classList.toggle('live',state.ready);
- $('toggle').textContent=running?'Stop monitoring':'Start monitoring';
+ $('toggle').textContent=running?'Stop':'Start';
  $('toggle').className=running?'stop':'start';
  $('restart').hidden=!running;
- $('note').textContent=running?'Keeps running when you close this tab':'Ready when you are';
+ $('note').textContent=''; $('start').hidden=running; $('heading').textContent=running?'Starting…':'Monitoring stopped';
  $('empty').hidden=state.ready;$('dashboard').hidden=!state.ready;
  if(state.ready && lastPid!==state.pid){$('dashboard').src='http://127.0.0.1:5051/';lastPid=state.pid;}
- if(!running){$('dashboard').removeAttribute('src');lastPid=null;$('heading').textContent='Ready for your next experiment';$('description').textContent='Monitoring is stopped. Start it here whenever you want to check your GPUs.';}
+ if(!running){$('dashboard').removeAttribute('src');lastPid=null;$('heading').textContent='Monitoring stopped';}
  for(const id of ['start','toggle','restart'])$(id).disabled=busy;
 }
 async function poll(){
- if(busy||requestInFlight)return;requestInFlight=true;
+ if(busy||requestInFlight||document.hidden)return;requestInFlight=true;
  try{const response=await fetch('/control/status',{cache:'no-store'});if(!response.ok)throw Error('The local launcher is unavailable. Reload this page to reconnect.');render(await response.json());showError('');}
  catch(error){showError(error.message);}
  finally{requestInFlight=false;}
@@ -58,5 +58,6 @@ window.addEventListener('message',event=>{
 $('toggle').addEventListener('click',()=>change(running?'stop':'start'));
 $('start').addEventListener('click',()=>change('start'));
 $('restart').addEventListener('click',()=>change('restart'));
-poll();setInterval(poll,4000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll();});
+poll();setInterval(poll,10000);
 </script></body></html>
