@@ -37,12 +37,17 @@ def validate(data):
     for alias, settings in hosts.items():
         if not isinstance(alias, str) or not alias or len(alias) > 255 or any(ord(c) < 32 for c in alias):
             raise ValueError("Invalid SSH alias")
-        if not isinstance(settings, dict) or set(settings) - {"name", "group"}:
+        if not isinstance(settings, dict) or set(settings) - {"name", "group", "my_users"}:
             raise ValueError("Invalid server settings")
         group = settings.get("group") or None
         if group is not None and group not in ids:
             raise ValueError("A server refers to a group that does not exist")
         clean_hosts[alias] = {"name": name(settings.get("name", alias)), "group": group}
+        if "my_users" in settings:
+            users = settings["my_users"]
+            if not isinstance(users, list) or len(users) > 20:
+                raise ValueError("Use at most 20 usernames per server")
+            clean_hosts[alias]["my_users"] = list(dict.fromkeys(name(user) for user in users))
     return {"version": 1, "groups": clean_groups, "hosts": clean_hosts}
 
 

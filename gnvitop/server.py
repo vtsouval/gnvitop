@@ -13,6 +13,7 @@ import threading
 import secrets
 import hmac
 import ipaddress
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask import Flask, jsonify, Response, request
@@ -30,16 +31,17 @@ SSH_TIMEOUT = 45
 # ── nvidia-smi queries ────────────────────────────────────────────────────────
 _GPU_QUERY = (
     "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,"
-    "utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null"
+    "utilization.gpu,temperature.gpu,power.draw,power.limit --format=csv,noheader,nounits 2>/dev/null"
 )
 _PROC_QUERY = (
-    r"nvidia-smi pmon -c 1 -s m 2>/dev/null | tail -n +3"
-    r" | while read gpu pid type mem cmd; do"
+    r"nvidia-smi pmon -c 1 -s um 2>/dev/null"
+    r" | awk '/^# gpu/ {for(i=2;i<=NF;i++) col[$i]=i-1; next}"
+    " !/^#/ && $2 ~ /^[0-9]+$/ {print $2, $1, (col[\"fb\"]?$(col[\"fb\"]):\"-\"), (col[\"sm\"]?$(col[\"sm\"]):\"-\")}'"
+    r" | while read pid gpu mem sm; do"
     r' if [ "$pid" != "-" ]; then'
-    r" user=$(ps -o user= -p $pid 2>/dev/null | tr -d ' ');"
+    r" user=$(ps -o user:256= -p $pid 2>/dev/null | tr -d ' ');"
     r" comm=$(ps -o comm= -p $pid 2>/dev/null | tr -d ' ');"
-    r' [ "$mem" = "-" ] && mem=0;'
-    r' printf "%s,%s,%s,%s,%s\n" "$pid" "$gpu" "$mem" "$user" "$comm";'
+    r' printf "%s,%s,%s,%s,%s,%s\n" "$pid" "$gpu" "$mem" "$user" "$comm" "$sm";'
     r" fi; done"
 )
 
@@ -169,6 +171,15 @@ def _parse_combined_output(output):
     return gpu_part.strip(), proc_part.strip(), vendor
 
 
+def _optional_metric(value):
+    """Unsupported NVIDIA readings are unknown, never zero."""
+    try:
+        number = float(value)
+        return number if math.isfinite(number) and number >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _build_gpus(gpu_part):
     """Parse GPU stats section into a list of GPU dicts."""
     gpus = []
@@ -190,6 +201,8 @@ def _build_gpus(gpu_part):
                 "memory_usage_pct": round(mem_used / mem_total * 100, 1) if mem_total > 0 else 0,
                 "gpu_utilization_pct": utilization,
                 "temperature_c": float(parts[6]),
+                "power_draw_w": _optional_metric(parts[7]) if len(parts) > 7 else None,
+                "power_limit_w": _optional_metric(parts[8]) if len(parts) > 8 else None,
                 "processes": [],
             })
     return gpus
@@ -445,16 +458,17 @@ def _attach_processes(gpus, proc_output):
     gpu_by_index = {g["index"]: g for g in gpus}
     for line in proc_output.split("\n"):
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 4 and parts[0].isdigit():
+        if len(parts) >= 4 and parts[0].isdigit() and parts[1].isdigit():
             user = parts[3] if parts[3] else "unknown"
             if user in SYSTEM_USERS:
                 continue
             gpu_idx = int(parts[1])
             proc = {
                 "pid": int(parts[0]),
-                "gpu_memory_mb": float(parts[2]) if parts[2] else 0,
+                "gpu_memory_mb": _optional_metric(parts[2]),
                 "user": user,
                 "command": parts[4] if len(parts) >= 5 else "",
+                "sm_utilization_pct": _optional_metric(parts[-1]) if len(parts) >= 6 else None,
             }
             if gpu_idx in gpu_by_index:
                 gpu_by_index[gpu_idx]["processes"].append(proc)

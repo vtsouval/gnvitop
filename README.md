@@ -15,6 +15,17 @@ that lets you start, restart, and stop monitoring from Safari.
   Empty groups remain visible for future machines.
 - Names and assignments are saved in `~/.config/gnvitop/dashboard.json`.
   Set `GNVITOP_PREFERENCES` to override this path.
+- Your workloads have a blue accent, a "Your workload" badge, and per-server
+  memory totals. GPU memory bars separate your allocation (blue), other users
+  (slate), and system/unreported usage (striped). Matching defaults to each
+  server's SSH username; **Organize → My usernames** accepts optional aliases.
+- Expand a GPU's process list to see your processes first, with memory and
+  sampled SM activity. These per-process readings may overlap and are not an
+  additive split of device utilization. Unsupported readings show N/A.
+  Process visibility, container usernames, and sampling can limit attribution.
+- NVIDIA GPU power appears beside memory as watts versus the configured
+  power limit, including in compact view. This is whole-GPU power, not per-user
+  power or whole-server electricity consumption. Unsupported devices show N/A.
 - On macOS, **`gnvitop`** starts monitoring in the background, prints a
   clickable URL, opens Safari, and returns to the shell. Closing the
   terminal does not stop monitoring.

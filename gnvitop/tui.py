@@ -167,10 +167,13 @@ def _draw(stdscr, data, loading, last_update, next_refresh, refresh_interval):
                 procs = gpu.get("processes", [])
                 if procs and row < h - 1:
                     user_mem = {}
+                    unknown_users = set()
                     for p in procs:
                         u = p.get("user", "?")
-                        user_mem[u] = user_mem.get(u, 0) + p.get("gpu_memory_mb", 0)
-                    user_parts = [f"{u}({_fmt_mb(m)})" for u, m in user_mem.items()]
+                        if p.get("gpu_memory_mb") is None:
+                            unknown_users.add(u)
+                        user_mem[u] = user_mem.get(u, 0) + (p.get("gpu_memory_mb") or 0)
+                    user_parts = [f"{u}({_fmt_mb(m)}{' + unknown' if u in unknown_users else ''})" for u, m in user_mem.items()]
                     _safe_addstr(stdscr, row, 8, "  ".join(user_parts), MAGENTA)
                     row += 1
 
