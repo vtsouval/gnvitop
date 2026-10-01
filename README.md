@@ -4,6 +4,47 @@
 
 <h1 align="center">gnvitop</h1>
 
+## This fork: groups, display names, and macOS browser controls
+
+This fork builds on [Linwei94/gnvitop](https://github.com/Linwei94/gnvitop).
+It adds persistent server groups and display names, plus a macOS launcher
+that lets you start, restart, and stop monitoring from Safari.
+
+- **Organize** lets you create and rename groups, rename server display
+  names, and assign servers to groups. SSH connections stay unchanged.
+  Empty groups remain visible for future machines.
+- Names and assignments are saved in `~/.config/gnvitop/dashboard.json`.
+  Set `GNVITOP_PREFERENCES` to override this path.
+- On macOS, **`gnvitop`** starts monitoring in the background, prints a
+  clickable URL, opens Safari, and returns to the shell. Closing the
+  terminal does not stop monitoring.
+- The dashboard header contains **Refresh · Restart · Stop**. Stop ends
+  monitoring and returns to a Start page at the same URL. Save
+  `http://127.0.0.1:5050` in Safari Favorites for browser-only use.
+- A small local controller starts at login and remains available while
+  monitoring is stopped. The last running/stopped state survives controller
+  restarts. Both services listen only on the Mac's loopback interface.
+- `gnvitop stop`, `gnvitop status`, and `gnvitop restart` are optional
+  command equivalents. `gnvitop --no-browser` starts without opening a tab.
+  `gnvitop --foreground` retains the original foreground behavior; existing
+  options such as `--agent`, `--tui`, and `--version` remain available.
+  Other platforms retain the original startup behavior.
+
+Install this fork from a checkout with `pipx install .`, or install a wheel
+built from this repository. The upstream PyPI package does not include these
+additions. First run installs two per-user launchd jobs; administrator access
+is not required. This is a local browser companion, not a Safari extension.
+
+The default inventory remains the SSH configuration. To use a selected list
+on macOS, create `~/Library/Application Support/gnvitop/ssh-config` before
+the first launch. Existing selected configurations are retained. A RunPod
+group does not provision pods or discover them through RunPod's API; add a
+reachable SSH entry and assign it to the group.
+
+For development checks: `python -m unittest discover -s tests -v`.
+
+The original project documentation follows.
+
 <p align="center">
   <strong>Global nvitop</strong> — a web-based GPU &amp; TPU monitoring dashboard that monitors <strong>all</strong> your remote accelerator servers from a single page.
 </p>

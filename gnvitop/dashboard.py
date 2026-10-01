@@ -562,6 +562,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .host-grid-folded .host-card:hover { opacity: 1; }
 
 
+[hidden]{display:none!important}
+.server-group{margin:8px 0 30px}.server-group-heading{display:flex;align-items:center;gap:18px;margin:0 0 14px;padding:0 2px}.server-group-heading h2{font-size:19px;margin:0;color:#e2e8f0}.server-group-heading span{font-size:12px;color:#94a3b8}.group-empty{padding:22px;border:1px dashed #334155;border-radius:12px;color:#94a3b8;font-size:13px;background:#111d31}
+#organizer{width:min(690px,calc(100% - 32px));max-height:85vh;overflow:auto;background:#162235;color:#e2e8f0;border:1px solid #475569;border-radius:16px;padding:28px;font:14px -apple-system,BlinkMacSystemFont,sans-serif}#organizer::backdrop{background:#0009}#organizer h2{margin:0 0 10px}#organizer h3{margin:24px 0 12px}#organizer p{line-height:1.6;color:#94a3b8}#organizer input,#organizer select{width:100%;margin-top:6px;background:#0f172a;border:1px solid #475569;border-radius:7px;color:#e2e8f0;padding:10px;font:inherit}#organizer button{background:#334155;border:1px solid #475569;border-radius:7px;color:#e2e8f0;padding:9px 14px;font:inherit;cursor:pointer}#organizer button:disabled{opacity:.5}.organizer-row{display:flex;gap:10px;align-items:center;margin-bottom:8px}.organizer-host{display:grid;grid-template-columns:1.3fr 1fr;gap:18px;margin:14px 0}.organizer-host label{color:#94a3b8;font-size:12px}.organizer-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}#organizer #save-organizer{background:#0c4a6e;border-color:#38bdf8}#organizer-error{color:#fca5a5}
+
 </style>
 </head>
 <body>
@@ -612,7 +616,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       </svg>
       <span class="version-tag">v{{GNVITOP_VERSION}}</span>
     </a>
+    <button class="btn-refresh" onclick="openOrganizer()">Organize</button>
     <button class="btn-refresh" id="btn-refresh" onclick="refresh()">Refresh</button>
+    <button class="btn-refresh" id="desktop-restart" onclick="controlMonitoring('restart')" hidden>Restart</button>
+    <button class="btn-refresh" id="desktop-stop" onclick="controlMonitoring('stop')" hidden>Stop</button>
   </div>
 </div>
 
@@ -622,7 +629,77 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   <div class="loading"><div class="spinner"></div><br>Connecting to hosts...</div>
 </div>
 
+<dialog id="organizer" aria-labelledby="organizer-title"><form onsubmit="saveOrganizer(event)">
+<h2 id="organizer-title">Organize your servers</h2><p>Choose display names and groups. These names do not change SSH connections.</p>
+<h3>Groups</h3><div id="organizer-groups"></div><button type="button" onclick="addGroup()">Add group</button>
+<h3>Servers</h3><div id="organizer-hosts"></div><p id="organizer-error" role="alert"></p>
+<div class="organizer-actions"><button type="button" onclick="document.getElementById('organizer').close()">Cancel</button><button id="save-organizer" type="submit">Save changes</button></div>
+</form></dialog>
 <script>
+const desktopControlOrigin = {{GNVITOP_CONTROL_ORIGIN}};
+const desktopManaged = Boolean(desktopControlOrigin && window.parent !== window);
+for(const id of ['desktop-restart','desktop-stop']) document.getElementById(id).hidden = !desktopManaged;
+function controlMonitoring(action) {
+  if(!desktopManaged || !['stop','restart'].includes(action)) return;
+  window.parent.postMessage({type:'gnvitop-control',action},desktopControlOrigin);
+}
+let dashboardPreferences = {{GNVITOP_PREFERENCES}};
+const preferencesToken = '{{GNVITOP_PREFERENCES_TOKEN}}';
+let preferencesDraft = null;
+function escapeText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function hostDisplayName(alias) { return dashboardPreferences.hosts[alias]?.name || alias; }
+function hostGroup(alias) { return dashboardPreferences.hosts[alias]?.group || null; }
+function renderOrganizer() {
+  const groupBox = document.getElementById('organizer-groups');
+  groupBox.innerHTML = '';
+  preferencesDraft.groups.forEach(group => {
+    const row = document.createElement('div'); row.className = 'organizer-row';
+    row.innerHTML = `<input aria-label="Name for group ${escapeText(group.id)}" value="${escapeText(group.name)}" maxlength="100" required><button type="button">Remove</button>`;
+    row.querySelector('input').addEventListener('input', e => group.name = e.target.value);
+    row.querySelector('button').addEventListener('click', () => {
+      preferencesDraft.groups = preferencesDraft.groups.filter(g => g.id !== group.id);
+      Object.values(preferencesDraft.hosts).forEach(h => { if(h.group === group.id) h.group = null; });
+      renderOrganizer();
+    });
+    groupBox.appendChild(row);
+  });
+  const hostBox = document.getElementById('organizer-hosts'); hostBox.innerHTML = '';
+  const aliases = [...new Set([...(lastData?.hosts || []).map(h => h.alias), ...Object.keys(preferencesDraft.hosts)])];
+  aliases.forEach(alias => {
+    if(!preferencesDraft.hosts[alias]) preferencesDraft.hosts[alias] = {name:alias,group:null};
+    const host = preferencesDraft.hosts[alias];
+    const row = document.createElement('div'); row.className = 'organizer-host';
+    row.innerHTML = `<label>${escapeText(alias)}<input aria-label="Display name for ${escapeText(alias)}" value="${escapeText(host.name)}" maxlength="100" required></label><label>Group<select aria-label="Group for ${escapeText(alias)}"><option value="">Ungrouped</option>${preferencesDraft.groups.map(g => `<option value="${escapeText(g.id)}" ${g.id===host.group?'selected':''}>${escapeText(g.name)}</option>`).join('')}</select></label>`;
+    row.querySelector('input').addEventListener('input', e => host.name = e.target.value);
+    row.querySelector('select').addEventListener('change', e => host.group = e.target.value || null);
+    hostBox.appendChild(row);
+  });
+}
+function openOrganizer() {
+  preferencesDraft = JSON.parse(JSON.stringify(dashboardPreferences));
+  document.getElementById('organizer-error').textContent = '';
+  renderOrganizer(); document.getElementById('organizer').showModal();
+}
+function addGroup() {
+  preferencesDraft.groups.push({id:'group_'+crypto.randomUUID().replace(/-/g,''),name:'New group'});
+  renderOrganizer();
+}
+async function saveOrganizer(event) {
+  event.preventDefault();
+  const button = document.getElementById('save-organizer'); button.disabled = true;
+  try {
+    const response = await fetch('/api/preferences', {method:'POST',headers:{'Content-Type':'application/json','X-Gnvitop-Token':preferencesToken},body:JSON.stringify(preferencesDraft)});
+    const data = await response.json();
+    if(!response.ok) throw new Error(data.error || 'Could not save settings');
+    dashboardPreferences = data;
+    document.getElementById('organizer').close();
+    if(lastData) renderHosts(lastData.hosts);
+  } catch(error) { document.getElementById('organizer-error').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
 // Universal tooltip for [data-tip] elements
 (function() {
   const tip = document.createElement('div');
@@ -684,7 +761,8 @@ function _setupDrag(grid) {
       handle.addEventListener('dragend', () => {
         card.classList.remove('dragging');
         grid.querySelectorAll('.host-card').forEach(c => c.classList.remove('drag-over'));
-        hostOrder = [...grid.querySelectorAll('.host-card')].map(c => c.dataset.alias);
+        const gridOrder = [...grid.querySelectorAll('.host-card')].map(c => c.dataset.alias);
+        hostOrder = [...hostOrder.filter(alias => !gridOrder.includes(alias)), ...gridOrder];
         localStorage.setItem('gnvitop-order', JSON.stringify(hostOrder));
       });
     }
@@ -1056,7 +1134,7 @@ function renderHosts(hosts) {
           <div class="host-header-left" draggable="false">
             <span class="drag-handle" title="Drag to reorder" onclick="event.stopPropagation()">&#8942;&#8942;</span>
             <div>
-              <div class="host-name">${host.alias}</div>
+              <div class="host-name">${escapeText(hostDisplayName(host.alias))}</div>
               <div class="host-info">${host.user}@${host.hostname}${host.port ? ':' + host.port : ''}</div>
               ${collapsedInfo}
             </div>
@@ -1081,15 +1159,25 @@ function renderHosts(hosts) {
     `;
   }
 
-  let html = '<div class="host-grid">' + expanded.map(renderCard).join('') + '</div>';
-
-  if (collapsed.length) {
-    html += `
-      <div class="folded-divider">
-        <span class="folded-label">&#9660; Folded (${collapsed.length})</span>
-      </div>
-      <div class="host-grid host-grid-folded">` + collapsed.map(renderCard).join('') + '</div>';
+  function renderSection(members) {
+    const open = members.filter(h => !collapsedHosts.has(h.alias));
+    const folded = members.filter(h => collapsedHosts.has(h.alias));
+    let html = '<div class="host-grid">' + open.map(renderCard).join('') + '</div>';
+    if(folded.length) html += `<div class="folded-divider"><span class="folded-label">Folded (${folded.length})</span></div><div class="host-grid host-grid-folded">` + folded.map(renderCard).join('') + '</div>';
+    return html;
   }
+  let html = '';
+  if(dashboardPreferences.groups.length) {
+    const groups = [...dashboardPreferences.groups];
+    if(filtered.some(h => !hostGroup(h.alias))) groups.push({id:null,name:'Ungrouped'});
+    for(const group of groups) {
+      const allMembers = hosts.filter(h => hostGroup(h.alias) === group.id);
+      const members = filtered.filter(h => hostGroup(h.alias) === group.id);
+      const gpuCount = allMembers.reduce((n,h) => n + h.gpus.length,0);
+      const content = members.length ? renderSection(members) : `<div class="group-empty">${allMembers.length ? 'No online GPU servers in this group. Expand view to see all hosts.' : 'No servers assigned yet.'}</div>`;
+      html += `<section class="server-group"><div class="server-group-heading"><h2>${escapeText(group.name)}</h2><span>${allMembers.length} server${allMembers.length===1?'':'s'} · ${gpuCount} GPU${gpuCount===1?'':'s'}</span></div>${content}</section>`;
+    }
+  } else html = renderSection(filtered);
 
   container.innerHTML = html;
   container.querySelectorAll('.host-grid').forEach(g => _setupDrag(g));

@@ -10,15 +10,19 @@ import shlex
 import subprocess
 import time
 import threading
+import secrets
+import hmac
+import ipaddress
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, Response, request
 import paramiko
 
 from . import __version__
 from .dashboard import DASHBOARD_HTML
 
 app = Flask(__name__)
+PREFERENCES_TOKEN = secrets.token_urlsafe(32)
 
 SSH_CONFIG_PATH = os.path.expanduser("~/.ssh/config")
 SSH_TIMEOUT = 45
@@ -631,9 +635,35 @@ def _start_background_warmer():
 @app.route("/")
 def index():
     import socket
+    from .preferences import load
     host_info = f"{getpass.getuser()}@{socket.gethostname()}"
     html = DASHBOARD_HTML.replace("{{GNVITOP_HOST_INFO}}", host_info).replace("{{GNVITOP_VERSION}}", __version__)
-    return Response(html, mimetype="text/html")
+    html = html.replace("{{GNVITOP_PREFERENCES}}", json.dumps(load()).replace("<", "\\u003c"))
+    html = html.replace("{{GNVITOP_PREFERENCES_TOKEN}}", PREFERENCES_TOKEN)
+    html = html.replace("{{GNVITOP_CONTROL_ORIGIN}}", json.dumps(os.environ.get("GNVITOP_CONTROL_ORIGIN", "")))
+    return Response(html, mimetype="text/html", headers={"Cache-Control": "no-store"})
+
+
+@app.route("/api/preferences", methods=["GET", "POST"])
+def api_preferences():
+    from .preferences import load, save
+    if request.method == "GET":
+        return jsonify(load())
+    try:
+        local = ipaddress.ip_address(request.remote_addr).is_loopback
+    except ValueError:
+        local = False
+    if not local or not hmac.compare_digest(request.headers.get("X-Gnvitop-Token", ""), PREFERENCES_TOKEN):
+        return jsonify(error="Reload the local dashboard before saving settings"), 403
+    origin = request.headers.get("Origin")
+    if origin is not None and origin != request.host_url.rstrip("/"):
+        return jsonify(error="Cross-origin changes are not allowed"), 403
+    if request.content_length is None or request.content_length > 65536:
+        return jsonify(error="Settings are too large"), 413
+    try:
+        return jsonify(save(request.get_json()))
+    except (ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
 
 
 @app.route("/api/gpus")

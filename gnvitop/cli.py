@@ -2,6 +2,7 @@
 """CLI entry point for gnvitop."""
 
 import argparse
+import sys
 import logging
 import os
 import signal
@@ -43,6 +44,13 @@ def _kill_stale_gnvitop(port):
 
 
 def main():
+    raw = sys.argv[1:]
+    foreground = "--foreground" in raw
+    if foreground:
+        sys.argv.remove("--foreground")
+    elif sys.platform == "darwin" and (not raw or raw in [["start"], ["stop"], ["status"], ["restart"], ["--no-browser"], ["start", "--no-browser"], ["restart", "--no-browser"], ["--help"], ["-h"]]):
+        from .desktop import cli
+        return cli(raw)
     parser = argparse.ArgumentParser(
         prog="gnvitop",
         description="Global nvitop: web-based GPU monitoring dashboard for remote servers via SSH.",

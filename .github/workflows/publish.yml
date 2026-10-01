@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.repository == 'Linwei94/gnvitop'
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
 
